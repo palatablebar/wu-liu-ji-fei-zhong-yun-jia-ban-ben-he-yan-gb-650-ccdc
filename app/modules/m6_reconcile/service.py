@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app import store
 from app.modules.m6_reconcile import compare, explain, totals
+from app.modules.m8_changes import reconcile as change_reconcile
 
 
 def reconcile(run_id: str) -> dict:
@@ -12,6 +13,8 @@ def reconcile(run_id: str) -> dict:
     weight_rows = store.weight_lines(run_id)
     charge_rows = store.charge_lines(run_id)
     accounts = compare.accounts(run, quarantine_rows, weight_rows, charge_rows)
+    # 服务变更两账（实际成本、降级损失），无成本行时不加账
+    accounts.extend(change_reconcile.accounts_for(run_id))
     explain.annotated(accounts)
     return {
         "run_id": run_id,

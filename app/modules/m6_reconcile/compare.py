@@ -9,8 +9,9 @@ from app.modules.m4_weights import billable
 from app.modules.m6_reconcile import totals
 
 
-def _account(key: str, title: str, left_label: str, left_value, parts: list[dict],
-             unit: str) -> dict:
+def make_account(key: str, title: str, left_label: str, left_value, parts: list[dict],
+                 unit: str) -> dict:
+    """构造一个左右两侧可对平的账；M6 自身与 M8 服务变更两账共用。"""
     right = Decimal("0") if unit == "元" else 0
     for part in parts:
         right = right + part["value"]
@@ -38,7 +39,7 @@ def row_account(run: dict, quarantine_rows: list[dict], weight_rows: list[dict])
     ]
     if unbilled:
         parts.append({"label": "未计费", "value": unbilled})
-    return _account(
+    return make_account(
         "rows",
         "运单行账",
         "采信记录",
@@ -55,7 +56,7 @@ def amount_account(charge_rows: list[dict]) -> dict:
         {"label": labels[key], "value": value}
         for key, value in parts_map.items()
     ]
-    return _account(
+    return make_account(
         "amount",
         "金额账",
         "应收合计",
@@ -72,7 +73,7 @@ def version_account(run: dict, weight_rows: list[dict]) -> dict:
     parts = [{"label": "单选命中", "value": hit}]
     if miss:
         parts.append({"label": "无命中或重叠", "value": miss})
-    return _account("version", "版本账", "可计费运单", total, parts, "行")
+    return make_account("version", "版本账", "可计费运单", total, parts, "行")
 
 
 def weight_account(weight_rows: list[dict]) -> dict:
@@ -83,7 +84,7 @@ def weight_account(weight_rows: list[dict]) -> dict:
         {"label": "实重择用", "value": actual},
         {"label": "体积重择用", "value": volumetric},
     ]
-    return _account("weight", "计费重账", "计费行数", billed, parts, "行")
+    return make_account("weight", "计费重账", "计费行数", billed, parts, "行")
 
 
 def accounts(run: dict, quarantine_rows: list[dict], weight_rows: list[dict],

@@ -30,6 +30,13 @@ REASONS: dict[str, dict[str, str]] = {
     "MIN_CHARGE_APPLIED": {"label": "最低收费兜底", "level": INFO},
     "VOLUMETRIC_APPLIED": {"label": "体积重大于实重", "level": INFO},
     "ZONE_REMOTE": {"label": "偏远分区附加", "level": INFO},
+    "SERVICE_DOWNGRADED": {"label": "承运商服务降级", "level": INFO},
+    "SERVICE_CHANGED": {"label": "承运商服务变更", "level": INFO},
+    "CHANGE_DUPLICATE": {"label": "服务变更重复送达已忽略", "level": INFO},
+    "CHANGE_WAYBILL_MISSING": {"label": "变更指向未知运单", "level": BLOCK},
+    "CHANGE_CARRIER_MISMATCH": {"label": "变更承运商与运单不符", "level": BLOCK},
+    "CHANGE_RATE_MISSING": {"label": "实际服务缺运价版本", "level": BLOCK},
+    "COST_UNRATEABLE": {"label": "实际服务无法计费", "level": BLOCK},
 }
 
 CODES = tuple(REASONS)

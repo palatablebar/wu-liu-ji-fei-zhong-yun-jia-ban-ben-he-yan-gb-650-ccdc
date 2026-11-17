@@ -103,6 +103,42 @@ CREATE TABLE IF NOT EXISTS charge_lines (
   codes TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (run_id, waybill_no)
 );
+CREATE TABLE IF NOT EXISTS service_changes (
+  run_id TEXT NOT NULL,
+  change_id TEXT NOT NULL,
+  waybill_no TEXT NOT NULL,
+  carrier TEXT NOT NULL DEFAULT '',
+  from_service TEXT NOT NULL DEFAULT '',
+  to_service TEXT NOT NULL DEFAULT '',
+  zone TEXT NOT NULL DEFAULT '',
+  change_type TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT '',
+  seq INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'received',
+  detail TEXT NOT NULL DEFAULT '',
+  digest TEXT NOT NULL DEFAULT '',
+  received_at TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (run_id, change_id)
+);
+CREATE TABLE IF NOT EXISTS cost_lines (
+  run_id TEXT NOT NULL,
+  waybill_no TEXT NOT NULL,
+  change_id TEXT NOT NULL DEFAULT '',
+  billed_service TEXT NOT NULL DEFAULT '',
+  actual_service TEXT NOT NULL DEFAULT '',
+  version_id TEXT NOT NULL DEFAULT '',
+  billable_kg TEXT NOT NULL DEFAULT '0.000',
+  base_amount TEXT NOT NULL DEFAULT '0.00',
+  step_amount TEXT NOT NULL DEFAULT '0.00',
+  remote_amount TEXT NOT NULL DEFAULT '0.00',
+  fuel_amount TEXT NOT NULL DEFAULT '0.00',
+  insurance_amount TEXT NOT NULL DEFAULT '0.00',
+  total_amount TEXT NOT NULL DEFAULT '0.00',
+  receivable_amount TEXT NOT NULL DEFAULT '0.00',
+  downgrade_loss TEXT NOT NULL DEFAULT '0.00',
+  codes TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (run_id, waybill_no)
+);
 """
 
 
@@ -332,3 +368,98 @@ def charge_lines(run_id: str) -> list[dict]:
 def latest_run_id() -> str:
     got = one("SELECT run_id FROM runs ORDER BY created_at DESC, run_id DESC LIMIT 1")
     return got["run_id"] if got else ""
+
+
+# --- 服务变更 / 实际成本 ---------------------------------------------------
+
+CHANGE_COLUMNS = (
+    "change_id", "waybill_no", "carrier", "from_service", "to_service", "zone",
+    "change_type", "source", "seq", "status", "detail", "digest", "received_at",
+)
+
+COST_COLUMNS = (
+    "change_id", "billed_service", "actual_service", "version_id", "billable_kg",
+    "base_amount", "step_amount", "remote_amount", "fuel_amount", "insurance_amount",
+    "total_amount", "receivable_amount", "downgrade_loss", "codes",
+)
+
+
+def get_change(run_id: str, change_id: str) -> dict | None:
+    return one(
+        "SELECT * FROM service_changes WHERE run_id = ? AND change_id = ?",
+        (run_id, change_id),
+    )
+
+
+def get_change_by_digest(run_id: str, digest: str) -> dict | None:
+    """无上游变更号时的兜底幂等键：同规范化载荷只认一条。"""
+    return one(
+        "SELECT * FROM service_changes WHERE run_id = ? AND digest = ?",
+        (run_id, digest),
+    )
+
+
+def insert_change(run_id: str, item: dict) -> None:
+    with session() as conn:
+        conn.execute(
+            f"INSERT INTO service_changes (run_id, {', '.join(CHANGE_COLUMNS)}) "
+            f"VALUES (?, {', '.join('?' for _ in CHANGE_COLUMNS)})",
+            (run_id,) + tuple(item[c] for c in CHANGE_COLUMNS),
+        )
+
+
+def service_changes(run_id: str) -> list[dict]:
+    return rows(
+        "SELECT * FROM service_changes WHERE run_id = ? "
+        "ORDER BY waybill_no, seq, received_at",
+        (run_id,),
+    )
+
+
+def active_changes(run_id: str) -> list[dict]:
+    """每票取 seq 最大的一条有效变更；同票旧变更不再参与重算。"""
+    rows = service_changes(run_id)
+    latest: dict[str, dict] = {}
+    for row in rows:
+        if row["status"] != "received":
+            continue
+        current = latest.get(row["waybill_no"])
+        if current is None or (row["seq"], row["received_at"], row["change_id"]) > (
+            current["seq"], current["received_at"], current["change_id"]
+        ):
+            latest[row["waybill_no"]] = row
+    return [latest[key] for key in sorted(latest)]
+
+
+def change_count(run_id: str) -> int:
+    got = one(
+        "SELECT COUNT(*) AS n FROM service_changes WHERE run_id = ?", (run_id,)
+    )
+    return int(got["n"]) if got else 0
+
+
+def replace_cost_lines(run_id: str, items: list[dict]) -> None:
+    """成本结果整体替换：旧结果先失效，再写新结果，重算不留残余。"""
+    with session() as conn:
+        conn.execute("DELETE FROM cost_lines WHERE run_id = ?", (run_id,))
+        conn.executemany(
+            "INSERT INTO cost_lines (run_id, waybill_no, change_id, billed_service, "
+            "actual_service, version_id, billable_kg, base_amount, step_amount, "
+            "remote_amount, fuel_amount, insurance_amount, total_amount, "
+            "receivable_amount, downgrade_loss, codes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    run_id, it["waybill_no"], it["change_id"], it["billed_service"],
+                    it["actual_service"], it["version_id"], it["billable_kg"],
+                    it["base_amount"], it["step_amount"], it["remote_amount"],
+                    it["fuel_amount"], it["insurance_amount"], it["total_amount"],
+                    it["receivable_amount"], it["downgrade_loss"], it["codes"],
+                )
+                for it in items
+            ],
+        )
+
+
+def cost_lines(run_id: str) -> list[dict]:
+    return rows("SELECT * FROM cost_lines WHERE run_id = ? ORDER BY waybill_no", (run_id,))

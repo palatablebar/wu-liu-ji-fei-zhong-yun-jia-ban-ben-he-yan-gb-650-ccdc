@@ -9,12 +9,16 @@ ROW_TEMPLATE = "差 {delta} 行：采信与下游行数不等"
 AMOUNT_TEMPLATE = "差 {delta} 元：分项之和与应收不等"
 VERSION_TEMPLATE = "差 {delta} 行：有运单未落到单一版本"
 WEIGHT_TEMPLATE = "差 {delta} 行：计费重来源分类不闭合"
+COST_TEMPLATE = "差 {delta} 元：实际成本与降级损失之和不等于客户应收"
+LOSS_TEMPLATE = "差 {delta} 元：逐票损失之和不等于应收减成本"
 
 TEMPLATES = {
     "rows": ROW_TEMPLATE,
     "amount": AMOUNT_TEMPLATE,
     "version": VERSION_TEMPLATE,
     "weight": WEIGHT_TEMPLATE,
+    "service_cost": COST_TEMPLATE,
+    "downgrade_loss": LOSS_TEMPLATE,
 }
 
 

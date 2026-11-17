@@ -54,3 +54,20 @@
 
 原因码只在 `app/reasons.py` 定义，分两级：`block` 表示该行不进计费，`info` 表示只做标记。
 每条隔离都带原始行号与原因码，可导出 CSV 复核。
+
+## 服务变更
+
+- 幂等键：优先取上游 `change_id`，缺失时用 `(运单号, 原服务, 实际服务, 来源, seq)` 的
+  sha256 摘要兜底，落库为 `digest:<前16位>`；同一键重试返回原记录并标 CHANGE_DUPLICATE，不新增差异。
+- 同票多条：按 `seq` 取最大者为当前有效变更，旧变更保留在台账但不参与重算。
+- 两张表：
+  - `service_changes` 变更台账：变更号、运单、原服务 `from_service`、实际服务 `to_service`、
+    方向 `change_type`（downgrade/upgrade/same/changed）、来源、序号、状态、载荷摘要、接收时刻。
+  - `cost_lines` 实际成本账：计费服务、实际服务、实际版本、实际计费重、五个成本分项、
+    成本合计、客户应收 `receivable_amount`、降级损失 `downgrade_loss`、原因码。
+- 口径：客户应收取 `charge_lines.total_amount` 冻结值，改服务不下调；
+  降级损失 = 应收 − 成本，Decimal 量化到分，允许为负；无变更运单快照应收，损失为 0。
+- 失效重算：成本账按当前变更台账整票全量替换，M5 重算或变更接收都会触发，不留陈旧行。
+- 新增原因码：SERVICE_DOWNGRADED（档位降级，info）、SERVICE_CHANGED（其它方向变更，info）、
+  CHANGE_DUPLICATE（重复送达，info）、CHANGE_WAYBILL_MISSING / CHANGE_CARRIER_MISMATCH（block，拒绝接收）、
+  CHANGE_RATE_MISSING / COST_UNRATEABLE（实际服务无运价，成本不可核，全额应收挂损失）。

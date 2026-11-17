@@ -39,6 +39,16 @@ def api_evidence(run: str = ""):
     )
 
 
+@router.get("/api/export/service-changes.csv")
+def api_service_changes(run: str = ""):
+    run_id = run or store.latest_run_id()
+    return Response(
+        content=service.changes_csv(run_id),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="service_changes.csv"'},
+    )
+
+
 @router.get("/api/export/manifest.json")
 def api_manifest(run: str = ""):
     run_id = run or store.latest_run_id()

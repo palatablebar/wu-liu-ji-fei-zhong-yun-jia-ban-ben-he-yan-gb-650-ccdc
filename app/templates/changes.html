@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}服务变更{% endblock %}
+{% block body %}
+<section class="head">
+  <h1>承运商服务变更工作台</h1>
+  <p class="meta">
+    变更 {{ summary.changed_rows or 0 }} 票 · 档位降级 {{ summary.downgraded_rows or 0 }} 票
+    · 实际损失为正 {{ summary.money_loss_rows or 0 }} 票
+    · 不可计费 {{ summary.unrateable_rows or 0 }} 票
+    {% if summary %}· 客户应收 {{ summary.receivable_total|money }} 元{% endif %}
+  </p>
+</section>
+
+<div class="rule-line">{{ rule(200) }}</div>
+
+<section class="block">
+  <h2>对平结论</h2>
+  {% if summary.cost_rows %}
+  <dl class="ledger">
+    <div><dt>客户应收（原服务，已确认）</dt><dd class="num">{{ summary.receivable_total|money }}</dd></div>
+    <div><dt>实际服务成本（变更后重算）</dt><dd class="num">{{ summary.cost_total|money }}</dd></div>
+    <div class="sum"><dt>降级损失（应收 − 成本）</dt><dd class="num">{{ summary.downgrade_loss_total|money }}</dd></div>
+  </dl>
+  <p class="meta">
+    应收 = 成本 + 损失：{{ "相等" if summary.conserved else "不等" }}
+    · 重算整票替换，同一变更重试不新增差异
+  </p>
+  {% else %}
+  <p class="empty">还没有服务变更，实际成本尚未重算。</p>
+  {% endif %}
+</section>
+
+<div class="rule-line">{{ rule(200) }}</div>
+
+<section class="block">
+  <h2>接收变更</h2>
+  <form class="cmd" id="change-form">
+    <label class="field span"><span>变更 JSON（单条对象或 {"changes": [...]} 批量）</span>
+      <textarea id="change-payload" class="raw" rows="6" placeholder='{"change_id":"C-001","waybill_no":"WB-1001","from_service":"standard","to_service":"economy"}'></textarea>
+    </label>
+    <button type="submit" class="btn">接收并重算</button>
+  </form>
+  <pre id="change-out" class="out">待接收</pre>
+</section>
+
+<div class="rule-line">{{ rule(200) }}</div>
+
+<section class="block">
+  <h2>变更依据台账</h2>
+  {% if changes %}
+  <table class="grid">
+    <thead>
+      <tr><th>运单号</th><th>变更号</th><th>原服务</th><th>实际服务</th><th>方向</th>
+        <th>来源</th><th class="num">序号</th><th>状态</th><th>接收时刻</th></tr>
+    </thead>
+    <tbody>
+      {% for row in changes %}
+      <tr>
+        <td class="mono">{{ row.waybill_no }}</td>
+        <td class="mono">{{ row.change_id }}</td>
+        <td>{{ row.from_service }}</td>
+        <td>{{ row.to_service }}</td>
+        <td>{{ row.change_type }}</td>
+        <td class="dim">{{ row.source }}</td>
+        <td class="num">{{ row.seq }}</td>
+        <td>{{ row.status }}</td>
+        <td class="mono dim">{{ row.received_at|local }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">还没有变更记录。</p>
+  {% endif %}
+</section>
+
+<div class="rule-line">{{ rule(200) }}</div>
+
+<section class="block">
+  <h2>逐票成本与降级损失</h2>
+  {% if cost_lines %}
+  <table class="grid">
+    <thead>
+      <tr><th>运单号</th><th>计费服务</th><th>实际服务</th><th>版本</th><th class="num">计费重</th>
+        <th class="num">客户应收</th><th class="num">实际成本</th><th class="num">降级损失</th><th>标记</th></tr>
+    </thead>
+    <tbody>
+      {% for row in cost_lines %}
+      <tr class="{{ 'flag-bad' if row.has_money_loss else '' }}">
+        <td class="mono">{{ row.waybill_no }}</td>
+        <td>{{ row.billed_service }}</td>
+        <td>{{ row.actual_service }}</td>
+        <td class="mono dim">{{ row.version_id or "—" }}</td>
+        <td class="num">{{ row.billable_kg|kg if row.billable_kg else "—" }}</td>
+        <td class="num">{{ row.receivable_amount|money }}</td>
+        <td class="num">{{ row.total_amount|money }}</td>
+        <td class="num strong">{{ row.downgrade_loss|money }}</td>
+        <td class="mono dim">{{ row.codes }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">还没有成本台账。</p>
+  {% endif %}
+  <p class="meta"><a href="/api/export/service-changes.csv">服务变更台账 CSV</a> · <a href="/api/export/evidence.csv">证据 CSV（含变更依据列）</a></p>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('change-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const out = document.getElementById('change-out');
+  const raw = document.getElementById('change-payload').value;
+  out.textContent = '处理中';
+  out.classList.remove('err');
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch (error) {
+    out.textContent = 'JSON 解析失败：' + error.message;
+    out.classList.add('err');
+    return;
+  }
+  try {
+    const response = await fetch('/api/changes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      out.textContent = (body.code || response.status) + ' ' + (body.detail || '');
+      out.classList.add('err');
+      return;
+    }
+    out.textContent = JSON.stringify(body.result, null, 2);
+    window.setTimeout(() => window.location.reload(), 400);
+  } catch (error) {
+    out.textContent = '请求失败：' + error.message;
+    out.classList.add('err');
+  }
+});
+</script>
+{% endblock %}

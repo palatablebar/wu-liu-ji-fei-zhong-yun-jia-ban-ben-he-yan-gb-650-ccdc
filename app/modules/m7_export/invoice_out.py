@@ -10,6 +10,7 @@ from decimal import Decimal
 from app import config, manifest, store
 from app.modules.m6_reconcile import service as reconcile_service
 from app.modules.m7_export import csv_out
+from app.modules.m8_changes import service as change_service
 
 INVOICE_HEADER = [
     "waybill_no", "carrier", "service", "zone", "pickup_utc", "billable_kg",
@@ -83,6 +84,7 @@ def carrier_summary(run_id: str) -> list[dict]:
 def manifest_doc(run_id: str) -> dict:
     run = store.get_run(run_id) or {}
     report = reconcile_service.reconcile(run_id)
+    change_summary = change_service.summary(run_id)
     doc = manifest.build(run, {
         "rows": {
             "input": int(run.get("rows_in") or 0),
@@ -94,6 +96,17 @@ def manifest_doc(run_id: str) -> dict:
             "conserved": report["conserved"],
         },
         "reconcile": report["verdict"],
+        "service_changes": {
+            "received": store.change_count(run_id),
+            "changed_rows": change_summary["changed_rows"],
+            "downgraded_rows": change_summary["downgraded_rows"],
+            "money_loss_rows": change_summary["money_loss_rows"],
+            "unrateable_rows": change_summary["unrateable_rows"],
+            "receivable_total": change_summary["receivable_total"],
+            "cost_total": change_summary["cost_total"],
+            "downgrade_loss_total": change_summary["downgrade_loss_total"],
+            "conserved": change_summary["conserved"],
+        },
         "rate_set_version": store.max_rate_set_version(),
         "params": {"profile": config.PROFILE, "quant": "0.01", "step": "0.5"},
         "export": {"invoice_rows": len(invoice_rows(run_id))},

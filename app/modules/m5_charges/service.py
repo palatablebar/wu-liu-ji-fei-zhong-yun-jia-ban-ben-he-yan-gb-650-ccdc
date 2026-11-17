@@ -10,6 +10,7 @@ from app.modules.m2_rates import service as rates
 from app.modules.m2_rates import version as rateversion
 from app.modules.m4_weights import billable
 from app.modules.m5_charges import addon, money, zone
+from app.modules.m8_changes import service as change_service
 from app.reasons import sort_codes
 
 
@@ -72,6 +73,9 @@ def compute_charges(run_id: str) -> dict:
     now = manifest.utc_now_iso()
     store.upsert_run(run_id, {"amount_total": str(grand), "updated_at": now})
     store.add_stage(run_id, "charges", now)
+    # 应收结果已重算，基于旧应收的实际成本账必须失效重算（无变更时刷新快照）
+    if store.change_count(run_id):
+        change_service.recompute(run_id)
     return {
         "run_id": run_id,
         "billed": len(lines),

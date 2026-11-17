@@ -13,8 +13,9 @@
 | M3 质量隔离 | 看原因码分布与隔离行，导出证据 CSV | GET /api/quarantine | `app/modules/m3_quality/handler.py` `app/modules/m3_quality/service.py` `app/modules/m3_quality/rules.py` `app/modules/m3_quality/quarantine.py` `app/modules/m3_quality/metrics.py` | `tests/test_m3_quality.py` |
 | M4 计费重 | 逐票看实重、体积重、来源与进位后计费重 | POST /api/weights | `app/modules/m4_weights/handler.py` `app/modules/m4_weights/service.py` `app/modules/m4_weights/volumetric.py` `app/modules/m4_weights/rounding.py` `app/modules/m4_weights/billable.py` | `tests/test_m4_weights.py` |
 | M5 分区附加 | 看首重、续重、偏远、燃油、保价与应收 | POST /api/charges | `app/modules/m5_charges/handler.py` `app/modules/m5_charges/service.py` `app/modules/m5_charges/zone.py` `app/modules/m5_charges/addon.py` `app/modules/m5_charges/money.py` | `tests/test_m5_charges.py` |
-| M6 账单对账 | 看四账是否相等，差在哪一项 | GET /api/reconcile | `app/modules/m6_reconcile/handler.py` `app/modules/m6_reconcile/service.py` `app/modules/m6_reconcile/compare.py` `app/modules/m6_reconcile/totals.py` `app/modules/m6_reconcile/explain.py` | `tests/test_m6_reconcile.py` |
-| M7 导出 | 导出账单、证据行与可复算的运行清单 | GET /api/export/invoice.csv | `app/modules/m7_export/handler.py` `app/modules/m7_export/service.py` `app/modules/m7_export/csv_out.py` `app/modules/m7_export/invoice_out.py` | `tests/test_m7_export.py` |
+| M6 账单对账 | 看六账是否相等，差在哪一项 | GET /api/reconcile | `app/modules/m6_reconcile/handler.py` `app/modules/m6_reconcile/service.py` `app/modules/m6_reconcile/compare.py` `app/modules/m6_reconcile/totals.py` `app/modules/m6_reconcile/explain.py` | `tests/test_m6_reconcile.py` |
+| M7 导出 | 导出账单、证据行、服务变更台账与可复算的运行清单 | GET /api/export/invoice.csv | `app/modules/m7_export/handler.py` `app/modules/m7_export/service.py` `app/modules/m7_export/csv_out.py` `app/modules/m7_export/invoice_out.py` `app/modules/m7_export/changes_out.py` | `tests/test_m7_export.py` |
+| M8 服务变更 | 接收承运商改服务、按实际服务重算成本、对平台降级损失 | POST /api/changes | `app/modules/m8_changes/handler.py` `app/modules/m8_changes/service.py` `app/modules/m8_changes/ledger.py` `app/modules/m8_changes/costing.py` `app/modules/m8_changes/identity.py` `app/modules/m8_changes/reconcile.py` | `tests/test_m8_changes.py` |
 
 ## 陷阱登记
 
@@ -33,6 +34,11 @@
 | TRAP-24 | 各分项各自四舍五入 | 分项之和与应收差一分钱 | 分项先量化到分，应收由分项求和得出 | `app/modules/m5_charges/money.py` | `tests/test_m5_charges.py` |
 | TRAP-25 | 同分区两版生效区间相交 | 取到哪版看运气，同一票时高时低 | 先检测重叠，重叠即整份运价集拒绝装载 | `app/modules/m2_rates/version.py` | `tests/test_m2_rates.py` |
 | TRAP-26 | 用旧运价集重新提交 | 旧价覆盖新价，已出账单金额回退 | 运价集版本号比较，低于现有版本直接拒绝 | `app/modules/m2_rates/service.py` | `tests/test_m2_rates.py` |
+| TRAP-27 | 加急件提货后被承运商降为普通，变更通知还可能重复送达 | 直接重算整票则客户应收跟着下调；忽略变更则降级损失被藏起来；重复通知又凭空多记差异 | 客户应收（charge_lines）冻结不下调，按实际服务另算成本 cost_lines，损失=应收−成本单独成账；变更以 (run_id, change_id) 幂等，缺号用载荷摘要兜底，重试只回原记录 | `app/modules/m8_changes/service.py` `app/modules/m8_changes/identity.py` `app/modules/m8_changes/ledger.py` | `tests/test_m8_changes.py` |
+| TRAP-28 | 降级后用另一套公式算成本 | 成本与应收口径漂移，损失对不上，无法复核 | 成本重算直接复用 M4/M5 的择版、体积重、进位、分项函数，只替换入参服务，规则单一来源 | `app/modules/m8_changes/costing.py` | `tests/test_m8_changes.py` |
+| TRAP-29 | 降档不一定省钱：economy 体积重除数更小（5000 vs 6000），计费重反而变大 | 想当然把损失归零或取绝对值，掩盖成本反升 | 损失按带符号 Decimal 记账（应收−成本），为负如实呈现；档位降级与损失为正分两个指标统计 | `app/modules/m8_changes/ledger.py` | `tests/test_m8_changes.py` |
+| TRAP-30 | 实际服务在提货时刻没有运价版本 | 抛异常整票中断，或当成 0 成本虚增利润 | 落 COST_UNRATEABLE，成本记 0、全额应收挂为损失并计入对账，金额显式可核 | `app/modules/m8_changes/ledger.py` | `tests/test_m8_changes.py` |
+| TRAP-31 | 上游 M4/M5 重算后，旧成本账还挂着 | 新应收配旧成本，损失账失真 | M5 重算完成即触发 M8 整票全量重算，成本结果整体替换；变更接收同样触发重算 | `app/modules/m5_charges/service.py` `app/modules/m8_changes/ledger.py` | `tests/test_m8_changes.py` |
 
 ## 对账规则
 
@@ -40,11 +46,15 @@
 - 金额账：应收合计 = 基础运费 + 续重运费 + 偏远附加 + 燃油附加 + 保价费（Decimal，分）
 - 版本账：可计费运单 = 单选命中 + 无命中或重叠
 - 计费重账：计费行数 = 实重择用 + 体积重择用
+- 服务成本账：客户应收 = 实际服务成本 + 降级损失（含 COST_UNRATEABLE 全额挂账）
+- 降级损失账：应收合计 − 成本合计 = 逐票降级损失之和
 - 重跑：同一份输入得到同一个 run_id，行数与合计不变
+- 服务变更：同一 change_id（或同载荷摘要）重试不新增台账行、不新增差异；同票多变更取 seq 最大者
 
 ## 已知不覆盖
 
-- 不做承运商账单文件的二次导入对账，本项目只核验自家计费结果是否四账相等
+- 不做承运商账单文件的二次导入对账，本项目只核验自家计费结果是否六账相等
 - 不处理多币种换算，运价表 currency 固定 CNY，只做展示
 - 体积重只支持单一除数，不支持按件拆分后逐件取整
 - 不支持按票拆分多段运输（一票多分区），分区按整票一个值处理
+- 服务变更只支持一票一个当前有效服务；变更覆盖不到的实际服务落 COST_UNRATEABLE，不做外部补价
